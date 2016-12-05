@@ -465,12 +465,24 @@ static struct nf_sockopt_ops ipfw_sockopts = {
  * XXX note that in 2.4 and up to 2.6.22 the skbuf is passed as sk_buff**
  * so we have an #ifdef to set the proper argument type.
  */
+/* RHEL 3.10.0-514.el7.x86_64
+typedef unsigned int nf_hookfn(const struct nf_hook_ops *ops,
+                               struct sk_buff *skb,
+                               const struct net_device *in,
+                               const struct net_device *out,
+#ifndef __GENKSYMS__
+                               const struct nf_hook_state *state
+#else
+                               int (*okfn)(struct sk_buff *)
+#endif
+                               );
+*/
 static unsigned int
 call_ipfw(
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0) && !defined(RHEL7_NF_BACKPORT)
        unsigned int hooknum,
 #else
-       const struct nf_hook_ops *hooknum,
+       const struct nf_hook_ops *ops,
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,23) // in 2.6.22 we have **
@@ -479,15 +491,26 @@ call_ipfw(
        struct sk_buff  *skb,
 #endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
-	const struct net_device *in, const struct net_device *out,
-	int (*okfn)(struct sk_buff *))
+	const struct net_device *in,
+	const struct net_device *out,
+#ifndef __GENKSYMS__
+       const struct nf_hook_state *state
 #else
-	const struct nf_hook_state *state)
+       int (*okfn)(struct sk_buff *)
 #endif
+#else
+	const struct nf_hook_state *state
+#endif
+	)
 {
-	(void)hooknum; (void)skb; /* UNUSED */
+	(void)ops; (void)skb; /* UNUSED */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
-	(void)in; (void)out; (void)okfn; /* UNUSED */
+	(void)in; (void)out; /* UNUSED */
+#ifndef __GENKSYMS__
+	(void)state; /* UNUSED */
+#else
+	(void)okfn; /* UNUSED */
+#endif
 #else
 	(void)state; /* UNUSED */
 #endif
@@ -565,7 +588,7 @@ ipfw2_queue_handler(QH_ARGS)
 	m->m_skb = skb;
 	m->m_len = skb->len;		/* len from ip header to end */
 	m->m_pkthdr.len = skb->len;	/* total packet len */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0) && !defined(RHEL7_NF_BACKPORT)
 	m->m_pkthdr.rcvif = info->indev;
 #else
 	m->m_pkthdr.rcvif = info->state.in;
@@ -578,7 +601,7 @@ ipfw2_queue_handler(QH_ARGS)
 #endif
 
 	/* XXX add the interface */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0) && !defined(RHEL7_NF_BACKPORT)
 	if (info->hook == IPFW_HOOK_IN) {
 		ret = ipfw_check_hook(NULL, &m, info->indev, PFIL_IN, NULL);
 	} else {
